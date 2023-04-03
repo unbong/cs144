@@ -2,6 +2,12 @@
 #define SPONGE_LIBSPONGE_BYTE_STREAM_HH
 
 #include <string>
+#include "util.hh"
+//#include <queue>
+#include <iostream>
+#include <cassert>
+
+
 
 //! \brief An in-order byte stream.
 
@@ -16,6 +22,15 @@ class ByteStream {
     // all, but if any of your tests are taking longer than a second,
     // that's a sign that you probably want to keep exploring
     // different approaches.
+    size_t _capacity = 0;       // 容量
+    size_t _readIndex = 0;      // 读取的索引
+    size_t _writeIndex = 0;     // 写入的索引
+    std::string _data {};       // 数据存储
+    bool _isEnded = false;
+    bool _isEOF = false;
+    size_t _writeBytesSize = 0;
+    size_t _readBytesSize = 0;
+    size_t _bufSize = 0;        // 缓冲区大小
 
     bool _error{};  //!< Flag indicating that the stream suffered an error.
 
