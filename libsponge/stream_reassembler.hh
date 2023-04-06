@@ -5,15 +5,42 @@
 
 #include <cstdint>
 #include <string>
+#include <queue>
+#include <utility>
+#include <map>
 
 //! \brief A class that assembles a series of excerpts from a byte stream (possibly out of order,
 //! possibly overlapping) into an in-order byte stream.
+struct Segment{
+
+    uint64_t  _index;           //
+    std::string  _data;
+    bool _eof;
+    size_t _payLoadSize ;
+
+    Segment(uint64_t index,const std::string & data, bool eof, size_t payLoadSize) : _index(index) ,_data( data),
+        _eof(eof) , _payLoadSize(payLoadSize){};
+    friend  bool operator< (Segment const & left, Segment const & right)
+    {
+        return left._index > right._index;
+    };
+};
+
 class StreamReassembler {
+
   private:
     // Your code here -- add private members as necessary.
 
     ByteStream _output;  //!< The reassembled in-order byte stream
     size_t _capacity;    //!< The maximum number of bytes
+    //using Segment = std::pair<uint64_t , std::reference_wrapper<const std::string>>;
+    //auto cmp = [](Segment left, Segment right){ return left.first < right.first;};
+    std::priority_queue<Segment> _unAssembledSegments{};
+    size_t _expectedIndex = 0;
+    size_t _unAssembledByteSize = 0;
+    std::map<size_t , size_t > _unAssemblePayloads{};
+    // !  using unAssemble payload map to calculate new seg`s payload size
+    void calculatePayload(size_t index ,  size_t size, size_t & payload);
 
   public:
     //! \brief Construct a `StreamReassembler` that will store up to `capacity` bytes.
