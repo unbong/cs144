@@ -8,6 +8,7 @@
 
 #include <optional>
 
+#define EOF_IS_TRUE true
 //! \brief The "receiver" part of a TCP implementation.
 
 //! Receives and reassembles segments into a ByteStream, and computes
@@ -19,6 +20,17 @@ class TCPReceiver {
 
     //! The maximum number of bytes we'll store.
     size_t _capacity;
+    bool _synFlag = false;              // syn flag
+    bool _finFlag = false;              // fin flag
+
+    WrappingInt32 _isn{0};          // syn sequence no
+    WrappingInt32 _finSeq{0};       // fin se
+
+    uint64_t _ackNo = 0;             // ack no;
+    uint64_t _lastReceviedSequence = 0 ; // 取得最大的最后一个序列
+
+
+
 
   public:
     //! \brief Construct a TCP receiver

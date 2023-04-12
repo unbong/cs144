@@ -14,8 +14,9 @@ using namespace std;
 //! \param n The input absolute 64-bit sequence number
 //! \param isn The initial sequence number
 WrappingInt32 wrap(uint64_t n, WrappingInt32 isn) {
-    DUMMY_CODE(n, isn);
-    return WrappingInt32{0};
+    uint64_t seq = (n + isn.raw_value() ) % (static_cast<uint64_t>(UINT32_MAX)+1);
+
+    return WrappingInt32(static_cast<uint32_t>(seq));
 }
 
 //! Transform a WrappingInt32 into an "absolute" 64-bit sequence number (zero-indexed)
@@ -29,6 +30,16 @@ WrappingInt32 wrap(uint64_t n, WrappingInt32 isn) {
 //! and the other stream runs from the remote TCPSender to the local TCPReceiver and
 //! has a different ISN.
 uint64_t unwrap(WrappingInt32 n, WrappingInt32 isn, uint64_t checkpoint) {
-    DUMMY_CODE(n, isn, checkpoint);
-    return {};
+
+    uint32_t offset = n.raw_value() - wrap(checkpoint, isn).raw_value();
+    uint64_t result = checkpoint + offset;
+    /*如果新位置距离checkpoint的偏移offset大于1<<32的一半也就是1<<31,
+    那么离checkpoint最近的应该是checkpoint前面的元素
+    举个例子: 1---------7(checkpoint)----------------1<<32+1;
+    由于是无符号数相减所以1-7 == 1<<32+1 - 7;
+    所以应该是1距离7最近所以应该选1
+    */
+    if (offset > (1u << 31) && result >= (1ul << 32))
+        result -= (1ul << 32);
+    return result;
 }
