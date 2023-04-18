@@ -62,7 +62,7 @@ void ByteStream::pop_output(const size_t len) {
 //! \returns a string
 std::string ByteStream::read(const size_t len) {
     // check
-    size_t bufLen =0;
+    size_t bufLen =len;
     if (len > buffer_size())
         bufLen = buffer_size();
 

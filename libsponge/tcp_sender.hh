@@ -57,6 +57,8 @@ class TCPSender {
 
     uint64_t _lastTickStamp{0};
 
+    bool _isFinAcked = false;
+
   public:
     //! Initialize a TCPSender
     TCPSender(const size_t capacity = TCPConfig::DEFAULT_CAPACITY,
