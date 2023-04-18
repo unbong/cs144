@@ -8,8 +8,17 @@
 
 #include <functional>
 #include <queue>
-
+#include <map>
 //! \brief The "sender" part of a TCP implementation.
+
+
+struct Segment_len {
+    TCPSegment segment;
+    uint32_t length;
+
+    Segment_len(TCPSegment seg, uint32_t len ): segment(seg), length(len) {};
+
+};
 
 //! Accepts a ByteStream, divides it up into segments and sends the
 //! segments, keeps track of which segments are still in-flight,
@@ -31,6 +40,22 @@ class TCPSender {
 
     //! the (absolute) sequence number for the next byte to be sent
     uint64_t _next_seqno{0};
+
+    uint64_t _bytes_flight{0};
+
+    uint64_t _windowSize{1};   //
+
+    std::map<uint64_t , Segment_len> _segments_copy{};
+
+    bool isFirst{true};
+
+    uint32_t _checkPoint {0};
+
+    unsigned int _timeout = _initial_retransmission_timeout;
+
+    unsigned int _consecutiveRetransmissionsCount {0};
+
+    uint64_t _lastTickStamp{0};
 
   public:
     //! Initialize a TCPSender

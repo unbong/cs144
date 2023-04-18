@@ -62,16 +62,18 @@ void ByteStream::pop_output(const size_t len) {
 //! \returns a string
 std::string ByteStream::read(const size_t len) {
     // check
-    if (len > buffer_size()) throw unix_error("peek data len > buffer size");
+    size_t bufLen =0;
+    if (len > buffer_size())
+        bufLen = buffer_size();
 
     string result;
-    for(size_t i = 0; i < len; i++)
+    for(size_t i = 0; i < bufLen; i++)
     {
         result.push_back( _data.at((_readIndex++) % _capacity));
     }
     _readIndex = _readIndex %_capacity;
-    _readBytesSize = _readBytesSize +len;
-    _bufSize -= len;
+    _readBytesSize = _readBytesSize +bufLen;
+    _bufSize -= bufLen;
 
     return result;
 }
