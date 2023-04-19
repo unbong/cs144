@@ -45,7 +45,7 @@ class TCPSender {
 
     uint64_t _windowSize{1};   //
 
-    std::map<uint64_t , Segment_len> _segments_copy{};
+    std::map<uint64_t , Segment_len> _segments_wait{};
 
     bool isFirst{true};
 
@@ -53,11 +53,15 @@ class TCPSender {
 
     unsigned int _timeout = _initial_retransmission_timeout;
 
+    unsigned int _retransmission_timer = 0;
+
     unsigned int _consecutiveRetransmissionsCount {0};
 
     uint64_t _lastTickStamp{0};
 
     bool _isFinAcked = false;
+
+    bool _isRetransmissionWorking = false;
 
   public:
     //! Initialize a TCPSender

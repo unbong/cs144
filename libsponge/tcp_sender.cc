@@ -67,10 +67,15 @@ void TCPSender::fill_window() {
         {
             _segments_out.push(segment);
             Segment_len outSeq(segment, len);
-            _segments_copy.insert_or_assign(absSeq, outSeq);
+            _segments_wait.insert_or_assign(absSeq, outSeq);
             _next_seqno +=  len;
             //if(_stream.eof()) _next_seqno+=2;
             _bytes_flight += len;
+            if(!_isRetransmissionWorking )
+            {
+                _retransmission_timer =0;
+                _isRetransmissionWorking = true;
+            }
         }
     }
 }
@@ -82,53 +87,57 @@ void TCPSender::ack_received(const WrappingInt32 ackno, const uint16_t window_si
 
     // 更新window size
      _windowSize = window_size;
-
+    bool isPop = false;
     // 从重新发送队列中删除对应的数据端
     uint32_t seq = ackno.raw_value();
     uint64_t absSeq = unwrap(WrappingInt32(seq), _isn, _checkPoint);
     _checkPoint = absSeq;
 
     // 如集合中存在ackno小的 则把小的也一起在集合中删除
-    for(auto iter = _segments_copy.begin();
-         iter != _segments_copy.lower_bound(absSeq)  && _next_seqno >= absSeq; iter++ )
+    for(auto iter = _segments_wait.begin();
+         iter != _segments_wait.lower_bound(absSeq)
+         && _next_seqno >= absSeq; iter++ )
     {
         _bytes_flight-=iter->second.length;
+        isPop = true;
+        _retransmission_timer = 0;
+        _timeout = _initial_retransmission_timeout;
+        _consecutiveRetransmissionsCount = 0;
     }
     if(_next_seqno >= absSeq)
     {
-        _segments_copy.erase(_segments_copy.begin(), _segments_copy.lower_bound(absSeq));
+        _segments_wait.erase(_segments_wait.begin(), _segments_wait.lower_bound(absSeq));
     }
+    if (isPop)
+        fill_window();
 
+    _isRetransmissionWorking = !_segments_wait.empty();
 }
 
 //! \param[in] ms_since_last_tick the number of milliseconds since the last call to this method
 void TCPSender::tick(const size_t ms_since_last_tick) {
 
+    if(!_isRetransmissionWorking)
+        return ;
     // 超时了
-    if(_timeout <= ms_since_last_tick)
+    _retransmission_timer += ms_since_last_tick;
+    if(_retransmission_timer  >= _timeout)
     {
         // 重传
-
-        for(auto iter = _segments_copy.begin(); iter != _segments_copy.end(); iter++)
+        for(auto iter = _segments_wait.begin(); iter != _segments_wait.end()
+                 && iter == _segments_wait.begin(); iter++)
         {
-            //if (_windowSize > iter->second.length)
-            //{
-                _segments_out.push(iter->second.segment);
-                _windowSize -= iter->second.length;
-            //}
-
+            _segments_out.push(iter->second.segment);
+            _windowSize -= iter->second.length;
         }
-
-        _timeout = 2 *  _initial_retransmission_timeout;
+        _retransmission_timer = 0;
+        _timeout = 2 *  _timeout;
+        _consecutiveRetransmissionsCount++;
     }
     else
     {
         fill_window();
-        _timeout -= ms_since_last_tick;
     }
-
-    _lastTickStamp += ms_since_last_tick;
-
 }
 
 unsigned int TCPSender::consecutive_retransmissions() const { return _consecutiveRetransmissionsCount; }
@@ -142,5 +151,5 @@ void TCPSender::send_empty_segment() {
     uint64_t absSeq = unwrap(header.seqno, _isn, _checkPoint);
     _segments_out.push(segment);
     Segment_len outSeq(segment, _lastTickStamp);
-    _segments_copy.insert_or_assign(absSeq, outSeq);
+    _segments_wait.insert_or_assign(absSeq, outSeq);
 }
