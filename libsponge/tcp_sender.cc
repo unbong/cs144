@@ -32,51 +32,55 @@ uint64_t TCPSender::bytes_in_flight() const {
 
 void TCPSender::fill_window() {
 
-    if(_windowSize > 0 && ! _isFinAcked  )
-    {
-        TCPSegment segment;
-        TCPHeader header ;
-        header.seqno = WrappingInt32(_isn+_next_seqno);
-        uint64_t absSeq = unwrap(header.seqno, _isn, _checkPoint);
+    if (_isFIN )
+        return ;
+    TCPSegment segment;
+    TCPHeader header ;
+    header.seqno = wrap(_next_seqno,_isn);
+    uint64_t absSeq = unwrap(header.seqno, _isn, _checkPoint);
 
-        if(absSeq == 0){
-            header.syn = true;
-            //header.seqno= WrappingInt32(0);
-        }
+    // send syn
+    if(absSeq == 0){
+        header.syn = true;
+        header.seqno = wrap(_next_seqno,_isn);
+        segment.header() = header;
+        _isSYN = true;
+        send_segment( segment);
+        return;
+    }
+
+    // send fin
+    if (_stream.eof() && (_windowSize -(_next_seqno-_checkPoint) ) > 0)
+    {
+        header.fin  = true;
+        _isFIN = true;
+        header.seqno = wrap(_next_seqno,_isn);
+        segment.header() = header;
+        send_segment( segment);
+        return;
+    }
+
+    while((_windowSize -(_next_seqno-_checkPoint) ) > 0 && !_stream.buffer_empty() )
+    {
 
         // 查看windowsize和最大有效载荷大小，后取得大小较小的数据。
-        uint32_t len = min(TCPConfig::MAX_PAYLOAD_SIZE, _windowSize);
+        uint32_t len = min(TCPConfig::MAX_PAYLOAD_SIZE, (_windowSize -(_next_seqno-_checkPoint) ));
 
         // syn 时没有有效载荷 但是占用一个字符
-        if(! header.syn)
-        {
-            Buffer str = _stream.read(len);
-            segment.payload() = str;
-            len = str.size();
-        }
-        if(_stream.eof())
+
+        Buffer str = _stream.read(len);
+        segment.payload() = str;
+
+        if(_stream.eof() && (_windowSize -(_next_seqno-_checkPoint) ) > 0)
         {
             header.fin  = true;
-            len++;
-            _isFinAcked = true;
+            _isFIN = true;
         }
+        header.seqno = wrap(_next_seqno,_isn);
         segment.header() = header;
-        _windowSize -= len;
+
         // 放入数据队列
-        if(len> 0 || header.syn || header.fin)
-        {
-            _segments_out.push(segment);
-            Segment_len outSeq(segment, len);
-            _segments_wait.insert_or_assign(absSeq, outSeq);
-            _next_seqno +=  len;
-            //if(_stream.eof()) _next_seqno+=2;
-            _bytes_flight += len;
-            if(!_isRetransmissionWorking )
-            {
-                _retransmission_timer =0;
-                _isRetransmissionWorking = true;
-            }
-        }
+        send_segment( segment);
     }
 }
 
@@ -86,28 +90,51 @@ void TCPSender::ack_received(const WrappingInt32 ackno, const uint16_t window_si
 
 
     // 更新window size
-     _windowSize = window_size;
+
     bool isPop = false;
     // 从重新发送队列中删除对应的数据端
-    uint32_t seq = ackno.raw_value();
-    uint64_t absSeq = unwrap(WrappingInt32(seq), _isn, _checkPoint);
-    _checkPoint = absSeq;
+
+    uint64_t absAckSeq = unwrap(ackno, _isn, _checkPoint);
+
+    if(absAckSeq > _next_seqno)
+        return ;
+
+    _windowSize = window_size;
+    if(_checkPoint < absAckSeq){
+        _checkPoint = absAckSeq;
+    }
+    else
+    {
+        return ;
+    }
+
 
     // 如集合中存在ackno小的 则把小的也一起在集合中删除
-    for(auto iter = _segments_wait.begin();
-         iter != _segments_wait.lower_bound(absSeq)
-         && _next_seqno >= absSeq; iter++ )
+    while(!_segments_wait.empty())
     {
-        _bytes_flight-=iter->second.length;
+        TCPSegment tcp_segment = _segments_wait.front();
+        if(unwrap(tcp_segment.header().seqno, _isn, _checkPoint) > absAckSeq)
+            break ;
+
+        _bytes_flight-=tcp_segment.length_in_sequence_space();
         isPop = true;
+
         _retransmission_timer = 0;
         _timeout = _initial_retransmission_timeout;
         _consecutiveRetransmissionsCount = 0;
+        _segments_wait.pop();
     }
-    if(_next_seqno >= absSeq)
-    {
-        _segments_wait.erase(_segments_wait.begin(), _segments_wait.lower_bound(absSeq));
-    }
+//    if(_next_seqno >= absAckSeq)
+//    {
+//        _bytes_flight-=_segments_wait.begin()->second.length_in_sequence_space();
+//        isPop = true;
+//        _retransmission_timer = 0;
+//        _timeout = _initial_retransmission_timeout;
+//        _consecutiveRetransmissionsCount = 0;
+//        _segments_wait.erase(_segments_wait.begin(), _segments_wait.begin());
+//
+//    }
+
     if (isPop)
         fill_window();
 
@@ -124,19 +151,16 @@ void TCPSender::tick(const size_t ms_since_last_tick) {
     if(_retransmission_timer  >= _timeout)
     {
         // 重传
-        for(auto iter = _segments_wait.begin(); iter != _segments_wait.end()
-                 && iter == _segments_wait.begin(); iter++)
-        {
-            _segments_out.push(iter->second.segment);
-            _windowSize -= iter->second.length;
-        }
+
+        _segments_out.push(_segments_wait.front());
+
         _retransmission_timer = 0;
         _timeout = 2 *  _timeout;
         _consecutiveRetransmissionsCount++;
     }
     else
     {
-        fill_window();
+        //fill_window();
     }
 }
 
@@ -148,8 +172,30 @@ void TCPSender::send_empty_segment() {
     header.ack = true;
     header.seqno = WrappingInt32(_isn.raw_value() + _stream.bytes_read());
 
-    uint64_t absSeq = unwrap(header.seqno, _isn, _checkPoint);
+
     _segments_out.push(segment);
-    Segment_len outSeq(segment, _lastTickStamp);
-    _segments_wait.insert_or_assign(absSeq, outSeq);
+    _segments_wait.push( segment);
+}
+
+void TCPSender::send_segment( const TCPSegment &segment) {
+
+
+    _segments_out.push(segment);
+
+    _segments_wait.push(segment);
+    _next_seqno +=  segment.length_in_sequence_space();
+
+    _bytes_flight += segment.length_in_sequence_space();
+//    if(_isSYN || _isFIN)
+//    {
+//        _next_seqno++;
+//        _bytes_flight++;
+//    }
+
+    if(!_isRetransmissionWorking )
+    {
+        _retransmission_timer =0;
+        _isRetransmissionWorking = true;
+    }
+
 }

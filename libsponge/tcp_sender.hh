@@ -12,13 +12,6 @@
 //! \brief The "sender" part of a TCP implementation.
 
 
-struct Segment_len {
-    TCPSegment segment;
-    uint32_t length;
-
-    Segment_len(TCPSegment seg, uint32_t len ): segment(seg), length(len) {};
-
-};
 
 //! Accepts a ByteStream, divides it up into segments and sends the
 //! segments, keeps track of which segments are still in-flight,
@@ -45,9 +38,7 @@ class TCPSender {
 
     uint64_t _windowSize{1};   //
 
-    std::map<uint64_t , Segment_len> _segments_wait{};
-
-    bool isFirst{true};
+    std::queue<TCPSegment> _segments_wait{};
 
     uint32_t _checkPoint {0};
 
@@ -59,7 +50,9 @@ class TCPSender {
 
     uint64_t _lastTickStamp{0};
 
-    bool _isFinAcked = false;
+    bool _isFIN = false;
+
+    bool _isSYN = false;
 
     bool _isRetransmissionWorking = false;
 
@@ -118,6 +111,9 @@ class TCPSender {
     //! \brief relative seqno for the next byte to be sent
     WrappingInt32 next_seqno() const { return wrap(_next_seqno, _isn); }
     //!@}
+
+  private:
+    void send_segment( const TCPSegment & segment);
 };
 
 #endif  // SPONGE_LIBSPONGE_TCP_SENDER_HH
