@@ -21,6 +21,27 @@ class TCPConnection {
     //! in case the remote TCPConnection doesn't know we've received its whole stream?
     bool _linger_after_streams_finish{true};
 
+    bool _isActive{true};
+
+    size_t _tick_count{0};
+    size_t _since_last_received_tick{0};
+
+    bool _isFinSend{false};
+    bool _isFinAckReceived{false};
+
+    TCPState::State _tcpState{TCPState::State::LISTEN};
+
+    enum class Type{
+        SYN,
+        FIN,
+        RST,
+        ACK };
+
+  private:
+    void send_syn_fin_rst_data(TCPConnection::Type type);
+    void send_ack_data(TCPConnection::Type type , const TCPReceiver &rcv) ;
+
+
   public:
     //! \name "Input" interface for the writer
     //!@{
@@ -55,7 +76,7 @@ class TCPConnection {
     size_t unassembled_bytes() const;
     //! \brief Number of milliseconds since the last segment was received
     size_t time_since_last_segment_received() const;
-    //!< \brief summarize the state of the sender, receiver, and the connection
+    //!< \brief summarize the _tcpState of the sender, receiver, and the connection
     TCPState state() const { return {_sender, _receiver, active(), _linger_after_streams_finish}; };
     //!@}
 
