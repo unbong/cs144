@@ -91,6 +91,7 @@ void TCPConnection::segment_received(const TCPSegment &seg) {
                 _tcpState = TCPState::State::ESTABLISHED;
             }
             _sender.send_empty_segment();
+            //_sender.fill_window();
             send_ack_data(TCPConnection::Type::ACK, _receiver);
         }
         // 收到 fin ack内容
@@ -108,8 +109,10 @@ void TCPConnection::segment_received(const TCPSegment &seg) {
                 _tcpState = TCPState::State::CLOSED;
             }
         }else{
-            // syn ack or ack 返回数据。
-            _sender.fill_window();
+            // ack 返回数据。
+//            cout<< "ack no: "<< _receiver.ackno().value() << " seq no: "<< _sender.next_seqno_absolute() <<endl;
+            //_sender.fill_window();
+            _sender.send_empty_segment();
             send_ack_data(TCPConnection::Type::ACK, _receiver);
         }
 
@@ -128,6 +131,7 @@ void TCPConnection::segment_received(const TCPSegment &seg) {
                 _tcpState = TCPState::State::LAST_ACK;
             }
         }
+
     }
 
 //    // 服务端收到了ack of syn时进入estabslish状态
@@ -141,6 +145,7 @@ void TCPConnection::segment_received(const TCPSegment &seg) {
         && seg.header().seqno == _receiver.ackno().value()-1)
     {
         _sender.send_empty_segment();
+        // todo keep alive
         send_ack_data(TCPConnection::Type::ACK, _receiver);
     }
 }
