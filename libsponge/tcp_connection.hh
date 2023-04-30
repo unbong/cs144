@@ -30,7 +30,7 @@ class TCPConnection {
     bool _isFinAckReceived{false};
 
     TCPState::State _tcpState{TCPState::State::LISTEN};
-    uint64_t _lastAckNo {0};
+    uint32_t _lastAckNo {0};
     enum class Type{
         SYN,
         FIN,
