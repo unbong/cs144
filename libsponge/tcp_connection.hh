@@ -21,26 +21,16 @@ class TCPConnection {
     //! in case the remote TCPConnection doesn't know we've received its whole stream?
     bool _linger_after_streams_finish{true};
 
-    bool _isActive{true};
+    bool _active{true};
 
-    size_t _tick_count{0};
     size_t _since_last_received_tick{0};
 
-    bool _isFinSend{false};
-    bool _isFinAckReceived{false};
 
-    TCPState::State _tcpState{TCPState::State::LISTEN};
     uint32_t _lastAckNo {0};
-    enum class Type{
-        SYN,
-        FIN,
-        RST,
-        ACK };
 
   private:
-    void send_syn_fin_rst_data(TCPConnection::Type type);
-    void send_ack_data(TCPConnection::Type type , const TCPReceiver &rcv) ;
-
+    void send_data();
+    void reset_connection();
 
   public:
     //! \name "Input" interface for the writer

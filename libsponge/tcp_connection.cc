@@ -1,6 +1,6 @@
-#include "tcp_connection.hh"
 
 #include <iostream>
+#include "tcp_connection.hh"
 
 // Dummy implementation of a TCP connection
 
@@ -26,254 +26,193 @@ size_t TCPConnection::unassembled_bytes() const {
 }
 
 size_t TCPConnection::time_since_last_segment_received() const {
-    // tick的计数值 - 没次收到时的tick快照 * 超时时间 （有可能不对）
-    return (_tick_count- _since_last_received_tick) * TCPConfig::TIMEOUT_DFLT;
+    // 返回累积时间
+    return _since_last_received_tick ;
 }
 
 void TCPConnection::segment_received(const TCPSegment &seg) {
 
-    // 保存已经执行了tick的次数
-    _since_last_received_tick = _tick_count;
-    // 如果收到rst 则关闭
-    if(seg.header().rst)
-    {
-        _receiver.stream_out().set_error();
+//    cerr<<"\r\n b flight"<< _sender.bytes_in_flight()<<endl;
+    _since_last_received_tick = 0;
+    // 如果收到rst
+    if(seg.header().rst){
         _sender.stream_in().set_error();
-        _isActive = false;
-        _tcpState = TCPState::State::CLOSED;
-        // todo close ?
-        //_sender.send_empty_segment();
+        _receiver.stream_out().set_error();
+        _active = false;
+        _linger_after_streams_finish = false;
+        cerr<< "rst"<< endl;
+        return;
+    }
 
-        // close(tmpSeg);
+    _receiver.segment_received(seg);
+
+    //
+    if(seg.header().ack)
+    {
+        _sender.ack_received(seg.header().ackno,seg.header().win);
+    }
+
+
+    cerr<< "sender: "<< TCPState::state_summary(_sender ) <<" receiver: "
+        << TCPState::state_summary(_receiver )  << endl;
+        // 如果cosed状态 则关闭连接
+    if(TCPState::state_summary(_sender ) == TCPSenderStateSummary::FIN_ACKED
+        && TCPState::state_summary(_receiver ) == TCPReceiverStateSummary::FIN_RECV
+        && !_linger_after_streams_finish
+        && _active){
+        _active = false;
+        cerr<<"last ack" <<endl;
         return ;
     }
-    else {
-        _receiver.segment_received(seg);
-    }
-    //  收到syn 返回syn ack 状态设置位syn_rcvd
-    if(seg.header().syn && !seg.header().ack  )
+
+    // server: listen, act send syn ack
+//    if (TCPState(_sender, _receiver, _active, _linger_after_streams_finish)
+//        == TCPState(TCPState::State::LISTEN))
+    if(TCPState::state_summary(_sender ) == TCPSenderStateSummary::CLOSED
+        && TCPState::state_summary(_receiver ) == TCPReceiverStateSummary::LISTEN)
     {
-        if(_tcpState == TCPState::State::LISTEN){
-            _tcpState = TCPState::State::SYN_RCVD;
-            _sender.fill_window();
-            send_ack_data(TCPConnection::Type::SYN, _receiver);
-        }
+        connect();
+        cerr<< "connect" <<endl;
+        return ;
     }
 
+    // syn rcv 发送ack
+    // syn sent 发送ack
+    // establish 发送ack
+    // fin wait1 发送ack
+    // fin wait2 发送ack
 
-    // 收到 ack
-    if(seg.header().ack){
-        // 接收ack和window
-        _sender.ack_received(seg.header().ackno, seg.header().win);
+    // 被动关闭的一方不需要处于徘徊的状态
+//    if (TCPState(_sender, _receiver, _active, _linger_after_streams_finish)
+//        == TCPState(TCPState::State::CLOSE_WAIT))
+    if(TCPState::state_summary(_sender ) == TCPSenderStateSummary::SYN_ACKED
+        && TCPState::state_summary(_receiver ) == TCPReceiverStateSummary::FIN_RECV
+        && _linger_after_streams_finish)
+    {
+        _linger_after_streams_finish = false;
+//        _sender.send_empty_segment();
+//        _sender.segments_out().front().header().fin = true;
+//        _sender.fill_window();
+        // 如果应用程序关闭连接，则发送fin
+//        send_data();
+        cerr<< "close wait!"  <<endl;
 
-        // 客户端收到syn ack 发送ack之后 进入到establish状态
-        if(seg.header().syn){
-            if(_tcpState == TCPState::State::SYN_SENT){
-                _tcpState = TCPState::State::ESTABLISHED;
-            }
-            _sender.send_empty_segment();
-            //_sender.fill_window();
-            send_ack_data(TCPConnection::Type::ACK, _receiver);
-        }
-        // 收到 fin ack内容
-        // 等待对方的fin
-        else if(seg.header().fin )
-        {
-            if(_tcpState == TCPState::State::ESTABLISHED){
-                _tcpState = TCPState::State::CLOSE_WAIT;
-                _sender.send_empty_segment();
-                send_ack_data(TCPConnection::Type::ACK, _receiver);
-            }
-            else if(_tcpState == TCPState::State::FIN_WAIT_2)
-            {
-                _tcpState = TCPState::State::TIME_WAIT;
-                _sender.send_empty_segment();
-                send_ack_data(TCPConnection::Type::ACK, _receiver);
-            }
-            else if(_tcpState == TCPState::State::FIN_WAIT_1)
-            {
-                _tcpState = TCPState::State::CLOSING;
-                _sender.send_empty_segment();
-                send_ack_data(TCPConnection::Type::ACK, _receiver);
-            }
-        }else{
-            if(_tcpState == TCPState::State::FIN_WAIT_1)
-            {
-                _tcpState = TCPState::State::FIN_WAIT_2;
-            }
-            else if(_tcpState == TCPState::State::CLOSING){
-                _tcpState = TCPState::State::TIME_WAIT;
-            }
-            else if(_tcpState == TCPState::State::LAST_ACK){
-                _tcpState = TCPState::State::CLOSED;
-            }
-
-            // ack 返回数据。
-            //cout<< "ack no: "<< _receiver.ackno().value() << " seq no: "<< _sender.next_seqno_absolute() <<endl;
-            if( _sender.stream_in().buffer_empty() ){
-
-                if(_lastAckNo != _receiver.ackno()->raw_value())
-                    _sender.send_empty_segment();
-            }
-            else
-                _sender.fill_window();
-            send_ack_data(TCPConnection::Type::ACK, _receiver);
-            if(_tcpState == TCPState::State::SYN_RCVD)
-            {
-                _tcpState = TCPState::State::ESTABLISHED;
-            }
-        }
-
-        // 如果发送端 入流结束 则发送fin
-        if (_sender.stream_in().eof())
-        {
-            if(_tcpState == TCPState::State::ESTABLISHED){
-                _tcpState = TCPState::State::FIN_WAIT_1;
-                _sender.fill_window();
-                send_ack_data(TCPConnection::Type::FIN, _receiver);
-                _isFinSend = true;
-            }
-            else if(_tcpState == TCPState::State::CLOSE_WAIT)
-            {
-                _tcpState = TCPState::State::LAST_ACK;
-                _tcpState = TCPState::State::FIN_WAIT_1;
-                _sender.fill_window();
-                send_ack_data(TCPConnection::Type::FIN, _receiver);
-                _isFinSend = true;
-            }
-        }
+//        return ;
     }
-    _lastAckNo = _receiver.ackno()->raw_value();
 
-//    // 服务端收到了ack of syn时进入estabslish状态
-//    if (_sender.next_seqno() ==  _receiver.ackno().value())
-//    {
-//        _isActive = true;
-//    }
-
-    // keep live
-    if(_receiver.ackno().has_value() && (seg.length_in_sequence_space() == 0)
-        && seg.header().seqno == _receiver.ackno().value()-1)
+    if(_receiver.ackno().has_value() && (seg.length_in_sequence_space() == 0 )
+        && (seg.header().seqno == _receiver.ackno().value() -1))
     {
         _sender.send_empty_segment();
-        // todo keep alive
-        send_ack_data(TCPConnection::Type::ACK, _receiver);
+        send_data();
+        cerr<<"keep alive"<< endl;
+        return ;
     }
+
+    _sender.fill_window();
+    // 在send data上只要不是没收到syn 就会发送ack
+    if(seg.length_in_sequence_space() > 0 && _sender.segments_out().empty()){
+        _sender.send_empty_segment();
+    }
+    send_data();
+
+//    cerr<< "\r\n state: " << TCPState(_sender, _receiver, _active, _linger_after_streams_finish).name() <<endl;
 }
 
-bool TCPConnection::active() const { return _isActive; }
+bool TCPConnection::active() const { return _active; }
 
 size_t TCPConnection::write(const string &data) {
-//    std::cout << "\r\n msg:client write start." << std::endl;
     size_t len =_sender.stream_in().write(data);
     _sender.fill_window();
-    send_ack_data(TCPConnection::Type::ACK, _receiver);
-    _isActive = true;
-
+    send_data();
     return len;
 }
 
 //! \param[in] ms_since_last_tick number of milliseconds since the last call to this method
 void TCPConnection::tick(const size_t ms_since_last_tick) {
-    //std::cout << "\r\n msg:tick start" << std::endl;
+//    std::cout << "\r\n msg:tick start" << std::endl;
+
     _sender.tick(ms_since_last_tick);
-    _tick_count++;
+    _since_last_received_tick += ms_since_last_tick;
+
     if(_sender.consecutive_retransmissions() > TCPConfig::MAX_RETX_ATTEMPTS)
     {
         // 终止连接 并向对方发送RST
         _sender.send_empty_segment();
-        _sender.segments_out().front().header().rst= true;
-        _tick_count =0 ;
-//        _isActive = false;
+
+        _since_last_received_tick =0 ;
+        reset_connection();
+        return ;
     }
 
-    // 如果timer大于0 则表明，自最后一次接收到seg 至少执行了一次tick 因此属于徘徊状态?
-    if (time_since_last_segment_received() > ms_since_last_tick){
-//        _linger_after_streams_finish = false;
+    // time wait时如果超过 10 * timeoutdef 就认为对方已经接到主动关闭一方发出的承认。
+    // 因此就关闭连接
+    if( _since_last_received_tick >= (10 * _cfg.rt_timeout)){
+
+        _active = false;
+        return;
     }
 
-    // 如果发送端 入流结束 则发送fin
-    if (_sender.stream_in().eof()
-        && (_tcpState == TCPState::State::ESTABLISHED
-        || _tcpState == TCPState::State::CLOSE_WAIT ))
+    // establis  主动断开连接 发送fin(ack)
+    // close wait 应用程序关闭 发送fin(ack)
+
+    // 因为stream终止时fill会设置fin
+    if(_sender.stream_in().eof())
     {
         _sender.fill_window();
-        send_ack_data(TCPConnection::Type::FIN, _receiver);
-
-        if(_tcpState == TCPState::State::ESTABLISHED){
-            _tcpState = TCPState::State::FIN_WAIT_1;
-        }
-        else if(_tcpState == TCPState::State::CLOSE_WAIT)
-        {
-            _tcpState = TCPState::State::LAST_ACK;
-        }
     }
-
-    // 干净的关闭
-    if(_tcpState == TCPState::State::TIME_WAIT
-        && time_since_last_segment_received() > (10 * TCPConfig::TIMEOUT_DFLT))
-    {
-        _isActive = false;
-        _tcpState = TCPState::State::CLOSED;
-    }
-    //std::cout << "\r\n msg:tick end" << std::endl;
+    send_data();
 }
 
 void TCPConnection::end_input_stream() {
     _sender.stream_in().end_input();
+    _sender.fill_window();
+    send_data();
 }
 
 void TCPConnection::connect() {
 
-   _sender.fill_window();
-   send_syn_fin_rst_data(TCPConnection::Type::SYN);
-   _tcpState = TCPState::State::SYN_SENT;
-   _isActive = true;
-//    std::cout << "\n msg:client connect done." << std::endl;
-   // todo ? win size 对吗？
-   //_segments_out.front().header().win = static_cast<uint16_t>(_receiver.window_size());
+    _sender.fill_window();
+    send_data();
+}
+void TCPConnection::reset_connection()
+{
+
+    TCPSegment tmpSeg ;
+    tmpSeg.header().rst = true;
+    _segments_out.push(tmpSeg);
+    _receiver.stream_out().set_error();
+    _sender.stream_in().set_error();
+    _active = false;
 }
 
-void TCPConnection::send_syn_fin_rst_data(TCPConnection::Type type) {
-   TCPSegment seg;
-   while (!_sender.segments_out().empty())
-   {
-        seg = _sender.segments_out().front();
-
-        if(type == TCPConnection::Type::SYN){
-            seg.header().syn = true;
-        }
-        else if(type == TCPConnection::Type::FIN) {
-//            cout << "send fin seq:" << seg.header().to_string()
-//                 << endl;
-            seg.header().fin = true;
-        }else if(type == TCPConnection::Type::RST){
-            seg.header().rst = true;
-        }
-        _segments_out.push(seg);
-        _sender.segments_out().pop();
-   }
-}
-
-void TCPConnection::send_ack_data(TCPConnection::Type type , const TCPReceiver &rcv) {
+void TCPConnection::send_data() {
    TCPSegment tmpSeg;
 
    while (!_sender.segments_out().empty())
    {
         tmpSeg = _sender.segments_out().front();
-        tmpSeg.header().ack = true;
-        if(type == TCPConnection::Type::SYN){
-            tmpSeg.header().syn = true;
+        if(_receiver.ackno().has_value()){
+            tmpSeg.header().ack = true;
+
+            tmpSeg.header().ackno = _receiver.ackno().value();
+            tmpSeg.header().win = _receiver.window_size();
         }
-        else if(type == TCPConnection::Type::FIN){
-            tmpSeg.header().fin = true;
-        }
-        tmpSeg.header().ackno = rcv.ackno().value();
-        tmpSeg.header().win = rcv.window_size();
+
         _segments_out.push(tmpSeg);
         _sender.segments_out().pop();
    }
-//   cerr << "\r\n msg: get ack  in syn  "<< tmpSeg.header().to_string()<< std::endl;
+
+   // ?
+//   if(_receiver.stream_out().input_ended()){
+//        if(!_sender.stream_in().eof())
+//            _linger_after_streams_finish = false;
+//        else if (_sender.bytes_in_flight() == 0)
+//        {
+//            if(!_linger_after_streams_finish  || time_since_last_segment_received()>=10*_cfg.rt_timeout)
+//                _active = false;
+//        }
+//    }
 }
 
 
@@ -290,7 +229,7 @@ TCPConnection::~TCPConnection() {
             _sender.send_empty_segment();
             _sender.segments_out().front().header().rst= true;
 //            push_segments();
-            _isActive = false;
+            _active = false;
 
         }
     } catch (const exception &e) {
