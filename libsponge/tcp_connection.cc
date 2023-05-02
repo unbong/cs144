@@ -53,9 +53,10 @@ void TCPConnection::segment_received(const TCPSegment &seg) {
     }
 
 
-    cerr<< "sender: "<< TCPState::state_summary(_sender ) <<" receiver: "
-        << TCPState::state_summary(_receiver )  << endl;
-        // 如果cosed状态 则关闭连接
+//    cerr<< "sender: "<< TCPState::state_summary(_sender ) <<" receiver: "
+//        << TCPState::state_summary(_receiver )  << endl;
+
+    // 如果last cak状态 则关闭连接
     if(TCPState::state_summary(_sender ) == TCPSenderStateSummary::FIN_ACKED
         && TCPState::state_summary(_receiver ) == TCPReceiverStateSummary::FIN_RECV
         && !_linger_after_streams_finish
@@ -65,14 +66,14 @@ void TCPConnection::segment_received(const TCPSegment &seg) {
         return ;
     }
 
-    // server: listen, act send syn ack
-//    if (TCPState(_sender, _receiver, _active, _linger_after_streams_finish)
-//        == TCPState(TCPState::State::LISTEN))
+    //  如果在listen状态下收到一个段后，还是处于listen状态，说明收到的段是非法的，因此返回一个空的ack信息
     if(TCPState::state_summary(_sender ) == TCPSenderStateSummary::CLOSED
         && TCPState::state_summary(_receiver ) == TCPReceiverStateSummary::LISTEN)
     {
-        connect();
-        cerr<< "connect" <<endl;
+//        connect();
+        cerr<< "listen" <<endl;
+//        _sender.send_empty_segment();
+//        send_data();
         return ;
     }
 

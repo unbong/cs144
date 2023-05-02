@@ -31,7 +31,13 @@ void TCPReceiver::segment_received(const TCPSegment &seg) {
         }
 
         // fin seq转换未ABS seq checkpoint的值为最后一个组装的字节数
-        uint64_t finSeq = unwrap(_finSeq, _isn, _reassembler.stream_out().bytes_written()  );
+        uint64_t finSeq = unwrap(_finSeq, _isn, _reassembler.stream_out().bytes_written() );
+        // 接收到的seq大于当前能接收的最大seq  即 不满足 不等式
+        if(finSeq >_reassembler.stream_out().bytes_written() + window_size()){
+            return ;
+        }
+
+
         // 写入最后一个字符，并指定未EOF
         _reassembler.push_substring(seg.payload().copy(),finSeq-1,  EOF_IS_TRUE);
         // 因为接收到了fin，ackNo需要占用一个位置，+1 且从流的索引转换到绝对的序列号时也需要+1
@@ -49,6 +55,10 @@ void TCPReceiver::segment_received(const TCPSegment &seg) {
         // 如果时syn和数据一起收到时数据的index需要加1
         //if(absSeq == 0 && header.syn )
         Buffer payload = seg.payload();
+        if(absSeq > _reassembler.stream_out().bytes_written() + window_size())
+        {
+            return ;
+        }
 
         // 写入StreamReAssembler中
         // absSeq与 第二个参数是 -1 的关系， 因此absSeq最小值传递1 在reassembler中是正确的
