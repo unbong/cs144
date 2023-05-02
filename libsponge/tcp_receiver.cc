@@ -46,13 +46,20 @@ void TCPReceiver::segment_received(const TCPSegment &seg) {
     {
 
         uint64_t absSeq = unwrap(header.seqno, _isn, _reassembler.stream_out().bytes_written() );
-        // 写入StreamReAssembler中
-        Buffer payload = seg.payload();
         // 如果时syn和数据一起收到时数据的index需要加1
-        if(absSeq == 0 && header.syn )
-            absSeq++;
+        //if(absSeq == 0 && header.syn )
+        Buffer payload = seg.payload();
 
-        _reassembler.push_substring(payload.copy(), absSeq-1, !EOF_IS_TRUE);
+        // 写入StreamReAssembler中
+        // absSeq与 第二个参数是 -1 的关系， 因此absSeq最小值传递1 在reassembler中是正确的
+        if(absSeq > 0 )
+            _reassembler.push_substring(payload.copy(), absSeq-1, !EOF_IS_TRUE);
+        // 特殊情况 syn=true且payload中存着数据时，将该数据以index为0的值组装
+        else if ( header.syn && absSeq == 0 && payload.size()> 0)
+        {
+            _reassembler.push_substring(payload.copy(), 0, !EOF_IS_TRUE);
+        }
+
         _ackNo = _reassembler.stream_out().bytes_written()+1;
         // 输入结束时ack需要加1
         if(_reassembler.stream_out().input_ended())
