@@ -148,7 +148,10 @@ void TCPConnection::tick(const size_t ms_since_last_tick) {
 
     // time wait时如果超过 10 * timeoutdef 就认为对方已经接到主动关闭一方发出的承认。
     // 因此就关闭连接
-    if( _since_last_received_tick >= (10 * _cfg.rt_timeout)){
+    if(TCPState(_sender, _receiver, _active, _linger_after_streams_finish)
+               == TCPState(TCPState::State::TIME_WAIT)
+        &&
+        _since_last_received_tick >= (10 * _cfg.rt_timeout)){
 
         _active = false;
         return;
