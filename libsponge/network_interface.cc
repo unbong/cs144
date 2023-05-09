@@ -33,14 +33,170 @@ void NetworkInterface::send_datagram(const InternetDatagram &dgram, const Addres
     // convert IP address of next hop to raw 32-bit representation (used in ARP header)
     const uint32_t next_hop_ip = next_hop.ipv4_numeric();
 
-    DUMMY_CODE(dgram, next_hop, next_hop_ip);
+    // 如果在缓存中找到对应物理地址
+    auto search = _ip_mac_caches.find(next_hop_ip);
+    if(search != _ip_mac_caches.end())
+    {
+        EthernetAddress ea = search ->second;
+        EthernetHeader eh;
+        eh.dst = ea;
+        eh.src = _ethernet_address;
+        eh.type = EthernetHeader::TYPE_IPv4;
+
+        EthernetFrame ef ;
+        ef.header() = eh;
+        ef.payload() = dgram.serialize();
+        _frames_out.push(ef);
+    }
+    // 在缓存中没有找到对应物理地址，则准备arp消息，并发送
+    else
+    {
+        EthernetHeader eh;
+        eh.dst = ETHERNET_BROADCAST;
+        eh.src = _ethernet_address;
+        eh.type =  EthernetHeader::TYPE_ARP;
+
+        ARPMessage am ;
+        am.opcode = ARPMessage::OPCODE_REQUEST;
+        am.sender_ethernet_address = _ethernet_address;
+        am.sender_ip_address = _ip_address.ipv4_numeric();
+        am.target_ethernet_address = {0,0,0,0,0,0};
+        am.target_ip_address = next_hop_ip;
+
+        EthernetFrame ef;
+        ef.header() = eh;
+        ef.payload() = am.serialize();
+        //  如果过去5秒内发送过相同的arp则停止发送
+        auto is_sended_in_5sec_iter =  _is_sended_in_last_5_sec.find(next_hop_ip);
+        if (is_sended_in_5sec_iter == _is_sended_in_last_5_sec.end()){
+            _frames_out.push(ef);
+            _is_sended_in_last_5_sec.insert_or_assign(next_hop_ip, _since_last_tick);
+        }
+        else if ( (_since_last_tick > is_sended_in_5sec_iter->second ) &&
+                 (_since_last_tick - is_sended_in_5sec_iter->second) >=  FIVE_SECOND)
+        {
+            _frames_out.push(ef);
+            _is_sended_in_last_5_sec.insert_or_assign(next_hop_ip, _since_last_tick);
+        }
+        else if( (_since_last_tick < is_sended_in_5sec_iter->second ) &&
+                 (_since_last_tick +( UINT64_MAX -  is_sended_in_5sec_iter->second )) >=  FIVE_SECOND )
+        {
+            _frames_out.push(ef);
+            _is_sended_in_last_5_sec.insert_or_assign(next_hop_ip, _since_last_tick);
+        }
+
+        // 将没有发送出去的报文缓存起来
+        _cache.push_back({next_hop_ip, dgram });
+    }
+
 }
 
 //! \param[in] frame the incoming Ethernet frame
 optional<InternetDatagram> NetworkInterface::recv_frame(const EthernetFrame &frame) {
-    DUMMY_CODE(frame);
+
+    EthernetHeader eh = frame.header();
+    if(eh.type == EthernetHeader::TYPE_IPv4)
+    {
+        // 如果不是我要接收的数据则无视
+        if(eh.dst != _ethernet_address ) return {};
+
+        InternetDatagram  iDataGram;
+        ParseResult res = iDataGram.parse(frame.payload());
+        if(res == ParseResult::NoError){
+            cerr<< "no err" << endl;
+            return optional<InternetDatagram>(iDataGram);
+        }
+        return {};
+    }
+    else if(eh.type == EthernetHeader::TYPE_ARP){
+        // 如果是arp
+
+
+        ARPMessage arpMes ;
+        ParseResult res = arpMes.parse(frame.payload());
+        if(res == ParseResult::NoError)
+        {
+            // 将物理地址与ip地址进行映射
+            uint32_t src_ip = arpMes.sender_ip_address;
+            EthernetAddress src_ether = arpMes.sender_ethernet_address;
+            _ip_mac_caches.insert_or_assign(src_ip, src_ether);
+
+            bool isInCache = false;
+            auto search = _ip_mac_caches.find(arpMes.target_ip_address);
+
+            uint32_t tar_ip_addr ;
+            EthernetAddress tar_eth_addr;
+            if(search != _ip_mac_caches.end()){
+                isInCache = true;
+                tar_eth_addr = search->second;
+                tar_ip_addr = search->first;
+            }
+            else
+            {
+                tar_eth_addr = _ethernet_address;
+                tar_ip_addr = _ip_address.ipv4_numeric();
+
+            }
+
+            // arp type request 则回复arp请求
+            uint32_t ip_addr = arpMes.sender_ip_address;
+            if (arpMes.opcode == ARPMessage::OPCODE_REQUEST)
+            {
+
+                // 如果dst不是我, 且 在缓存里没有 则无视
+                if( !isInCache && arpMes.target_ip_address != _ip_address.ipv4_numeric() ) return{};
+
+                EthernetAddress  ea = arpMes.sender_ethernet_address;
+                arpMes.sender_ethernet_address = tar_eth_addr;
+                arpMes.sender_ip_address = tar_ip_addr;
+                arpMes.target_ip_address =ip_addr;
+                arpMes.target_ethernet_address = ea;
+                arpMes.opcode = ARPMessage::OPCODE_REPLY ;
+
+                EthernetHeader reply_eh;
+                reply_eh.type = eh.type;
+                reply_eh.src = _ethernet_address;
+                reply_eh.dst = eh.src;
+
+                EthernetFrame ef ;
+                ef.header() = reply_eh;
+                ef.payload() = arpMes.serialize();
+
+                _frames_out.push(ef);
+            }
+
+            else if(arpMes.opcode == ARPMessage::OPCODE_REPLY)
+            {
+
+                _is_sended_in_last_5_sec.erase(ip_addr);
+
+                for(auto iter = _cache.begin(); iter != _cache.end(); )
+                {
+                    if(iter->first == ip_addr)
+                    {
+                        //
+                        EthernetHeader header;
+                        header.dst = arpMes.sender_ethernet_address;
+                        header.src = _ethernet_address;
+                        header.type = EthernetHeader::TYPE_IPv4;
+
+                        EthernetFrame ef ;
+                        ef.header() = header;
+                        ef.payload() = iter->second.serialize();
+                        _frames_out.push(ef);
+                        iter = _cache.erase(iter);
+                    }
+                    else
+                        iter++;
+                }
+            }
+        }
+    }
+
     return {};
 }
 
 //! \param[in] ms_since_last_tick the number of milliseconds since the last call to this method
-void NetworkInterface::tick(const size_t ms_since_last_tick) { DUMMY_CODE(ms_since_last_tick); }
+void NetworkInterface::tick(const size_t ms_since_last_tick) {
+    _since_last_tick +=ms_since_last_tick;
+}
