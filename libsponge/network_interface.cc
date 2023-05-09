@@ -37,7 +37,7 @@ void NetworkInterface::send_datagram(const InternetDatagram &dgram, const Addres
     auto search = _ip_mac_caches.find(next_hop_ip);
     if(search != _ip_mac_caches.end())
     {
-        EthernetAddress ea = search ->second;
+        EthernetAddress ea = search ->second.ethernetAddress;
         EthernetHeader eh;
         eh.dst = ea;
         eh.src = _ethernet_address;
@@ -67,22 +67,22 @@ void NetworkInterface::send_datagram(const InternetDatagram &dgram, const Addres
         ef.header() = eh;
         ef.payload() = am.serialize();
         //  如果过去5秒内发送过相同的arp则停止发送
-        auto is_sended_in_5sec_iter =  _is_sended_in_last_5_sec.find(next_hop_ip);
-        if (is_sended_in_5sec_iter == _is_sended_in_last_5_sec.end()){
+        auto is_sended_in_5sec_iter = _send_in_5sec.find(next_hop_ip);
+        if (is_sended_in_5sec_iter == _send_in_5sec.end()){
             _frames_out.push(ef);
-            _is_sended_in_last_5_sec.insert_or_assign(next_hop_ip, _since_last_tick);
+            _send_in_5sec.insert_or_assign(next_hop_ip, _since_last_tick);
         }
         else if ( (_since_last_tick > is_sended_in_5sec_iter->second ) &&
-                 (_since_last_tick - is_sended_in_5sec_iter->second) >=  FIVE_SECOND)
+                 (_since_last_tick - is_sended_in_5sec_iter->second) >= _FIVE_SECOND)
         {
             _frames_out.push(ef);
-            _is_sended_in_last_5_sec.insert_or_assign(next_hop_ip, _since_last_tick);
+            _send_in_5sec.insert_or_assign(next_hop_ip, _since_last_tick);
         }
         else if( (_since_last_tick < is_sended_in_5sec_iter->second ) &&
-                 (_since_last_tick +( UINT64_MAX -  is_sended_in_5sec_iter->second )) >=  FIVE_SECOND )
+                 (_since_last_tick +( UINT64_MAX -  is_sended_in_5sec_iter->second )) >= _FIVE_SECOND)
         {
             _frames_out.push(ef);
-            _is_sended_in_last_5_sec.insert_or_assign(next_hop_ip, _since_last_tick);
+            _send_in_5sec.insert_or_assign(next_hop_ip, _since_last_tick);
         }
 
         // 将没有发送出去的报文缓存起来
@@ -110,8 +110,6 @@ optional<InternetDatagram> NetworkInterface::recv_frame(const EthernetFrame &fra
     }
     else if(eh.type == EthernetHeader::TYPE_ARP){
         // 如果是arp
-
-
         ARPMessage arpMes ;
         ParseResult res = arpMes.parse(frame.payload());
         if(res == ParseResult::NoError)
@@ -119,16 +117,17 @@ optional<InternetDatagram> NetworkInterface::recv_frame(const EthernetFrame &fra
             // 将物理地址与ip地址进行映射
             uint32_t src_ip = arpMes.sender_ip_address;
             EthernetAddress src_ether = arpMes.sender_ethernet_address;
-            _ip_mac_caches.insert_or_assign(src_ip, src_ether);
+            EthAddr_Tick et{src_ether, _since_last_tick};
+            _ip_mac_caches.insert_or_assign(src_ip, et);
 
             bool isInCache = false;
             auto search = _ip_mac_caches.find(arpMes.target_ip_address);
-
+            // 如果在缓存中存在，则将缓存中的mac与ip返回
             uint32_t tar_ip_addr ;
             EthernetAddress tar_eth_addr;
             if(search != _ip_mac_caches.end()){
                 isInCache = true;
-                tar_eth_addr = search->second;
+                tar_eth_addr = search->second.ethernetAddress;
                 tar_ip_addr = search->first;
             }
             else
@@ -167,8 +166,7 @@ optional<InternetDatagram> NetworkInterface::recv_frame(const EthernetFrame &fra
 
             else if(arpMes.opcode == ARPMessage::OPCODE_REPLY)
             {
-
-                _is_sended_in_last_5_sec.erase(ip_addr);
+                _send_in_5sec.erase(ip_addr);
 
                 for(auto iter = _cache.begin(); iter != _cache.end(); )
                 {
@@ -199,4 +197,14 @@ optional<InternetDatagram> NetworkInterface::recv_frame(const EthernetFrame &fra
 //! \param[in] ms_since_last_tick the number of milliseconds since the last call to this method
 void NetworkInterface::tick(const size_t ms_since_last_tick) {
     _since_last_tick +=ms_since_last_tick;
+
+    for(auto iter = _ip_mac_caches.begin(); iter!= _ip_mac_caches.end();)
+    {
+
+        if((_since_last_tick - iter->second.tick) >= _THIRTY_SECOND ){
+            iter = _ip_mac_caches.erase(iter);
+        }
+        else
+            iter++;
+    }
 }

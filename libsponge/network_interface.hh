@@ -42,16 +42,23 @@ class NetworkInterface {
     //! outbound queue of Ethernet frames that the NetworkInterface wants sent
     std::queue<EthernetFrame> _frames_out{};
 
-    std::map<uint32_t, EthernetAddress> _ip_mac_caches{};
+    struct EthAddr_Tick{
+        EthernetAddress ethernetAddress;
+        size_t tick;
+    };
+
+    std::map<uint32_t, EthAddr_Tick> _ip_mac_caches{};
 
     size_t _since_last_tick{0};
 
-    const size_t FIVE_SECOND = 5000;
-    const size_t THIRTY_SECOND = 30000;
+    const size_t _FIVE_SECOND = 5000;
+    const size_t _THIRTY_SECOND = 30000;
 
-    std::map<uint32_t, size_t> _is_sended_in_last_5_sec{};
+    std::map<uint32_t, size_t> _send_in_5sec{};
 
     std::list<std::pair<uint32_t, InternetDatagram >> _cache{};
+
+
 
   public:
     //! \brief Construct a network interface with given Ethernet (network-access-layer) and IP (internet-layer) addresses

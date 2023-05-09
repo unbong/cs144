@@ -1,4 +1,5 @@
-#include "socket.hh"
+//#include "socket.hh"
+#include "tcp_sponge_socket.hh"
 #include "util.hh"
 
 #include <cstdlib>
@@ -22,7 +23,7 @@ void get_URL(const string &host, const string &path) {
     const string HEAD_HOST = "Host: " + host + "\r\n";
     const string CONNECTION_CLOSE = "Connection: close\r\n";
     string response = "";
-    TCPSocket tcpSocket ;
+    FullStackSocket tcpSocket ;
     tcpSocket.connect(Address(host, HTTP));
 
     size_t rsize = tcpSocket.write(HEAD_GET);
@@ -49,6 +50,7 @@ void get_URL(const string &host, const string &path) {
 
     cout << outputData;
 
+    tcpSocket.wait_until_closed();
     // Then you'll need to print out everything the server sends back,
     // (not just one call to read() -- everything) until you reach
     // the "eof" (end of file).
@@ -79,6 +81,8 @@ int main(int argc, char *argv[]) {
 
         // Call the student-written function.
         get_URL(host, path);
+
+
     } catch (const exception &e) {
         cerr << e.what() << "\n";
         return EXIT_FAILURE;
