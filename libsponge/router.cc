@@ -1,6 +1,7 @@
 #include "router.hh"
 
 #include <iostream>
+#include <string>
 
 using namespace std;
 
@@ -29,14 +30,43 @@ void Router::add_route(const uint32_t route_prefix,
     cerr << "DEBUG: adding route " << Address::from_ipv4_numeric(route_prefix).ip() << "/" << int(prefix_length)
          << " => " << (next_hop.has_value() ? next_hop->ip() : "(direct)") << " on interface " << interface_num << "\n";
 
-    DUMMY_CODE(route_prefix, prefix_length, next_hop, interface_num);
     // Your code here.
+
+    IpTableItem item;
+    item.route_prefix = route_prefix;
+    item.prefix_length = prefix_length;
+    item.next_hop = next_hop;
+    item.interface_num = interface_num;
+
+    _iptables.push_back(item);
 }
 
 //! \param[in] dgram The datagram to be routed
 void Router::route_one_datagram(InternetDatagram &dgram) {
-    DUMMY_CODE(dgram);
     // Your code here.
+
+    IPv4Header & header = dgram.header();
+    // ttl 检查 如果等于0 或 减1后等于0 丢弃
+    uint8_t ttl = header.ttl;
+    if(ttl == 0 || ttl-1 == 0)
+    {
+        return;
+    }
+    ttl--;
+
+    //匹配
+    IpTableItem target{};
+
+    match(header.dst, target);
+
+
+    // 如果找到匹配的则更新ttl后转发
+    header.ttl = ttl;
+    Address next_hop (target.next_hop->ip(), target.next_hop->port());
+    if(!target.next_hop.has_value()) {
+        next_hop = Address::from_ipv4_numeric(header.dst);
+    };
+    interface(target.interface_num).send_datagram(dgram,next_hop );
 }
 
 void Router::route() {
@@ -48,4 +78,41 @@ void Router::route() {
             queue.pop();
         }
     }
+}
+
+
+int Router::match(uint32_t dst, Router::IpTableItem &tableItem) {
+
+    int longest_length = 0;
+    // 找到匹配
+    for(auto iter = _iptables.begin(); iter != _iptables.end(); iter++)
+    {
+
+        // save default route
+        if(iter->route_prefix == 0) {
+            tableItem = *iter;
+        }
+        // 1000...0000 -> 1111...0000
+        int and_mask = 0xFFFFFFFF;
+        if(iter->prefix_length <= 32 && iter->prefix_length >0  ) {
+
+            uint8_t right_shift = iter->prefix_length -1;
+            and_mask = RIGHT_MOVE_BASE >> right_shift;
+        }
+
+        // 1010...1111 & 1111...0000 ->  1010...0000
+        uint32_t prefix = static_cast<uint32_t> (iter->route_prefix & and_mask);
+        // 1010...1010 xor 1010...0000 -> 0000... 1010
+        uint32_t xor_res = dst ^ prefix;
+        // 将xor结果用and_mask 过滤后 如果为0则说明匹配了
+        if( (xor_res & and_mask) == 0)
+        {
+            if(iter->prefix_length > longest_length) {
+                longest_length = iter->prefix_length;
+                tableItem = *iter;
+            }
+        }
+    }
+
+    return 0;
 }

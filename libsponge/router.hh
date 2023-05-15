@@ -49,6 +49,19 @@ class Router {
     //! datagram's destination address.
     void route_one_datagram(InternetDatagram &dgram);
 
+    struct IpTableItem{
+        uint32_t route_prefix{0};
+        uint8_t prefix_length{0};
+        std::optional<Address> next_hop{};
+        size_t interface_num{0};
+
+    };
+
+    std::list<IpTableItem> _iptables{};
+
+    // 1000...000 32bit;  右移基数
+    const int RIGHT_MOVE_BASE = 0x80000000;
+
   public:
     //! Add an interface to the router
     //! \param[in] interface an already-constructed network interface
@@ -69,6 +82,7 @@ class Router {
 
     //! Route packets between the interfaces
     void route();
+    int match(uint32_t dst, IpTableItem &tableItem);
 };
 
 #endif  // SPONGE_LIBSPONGE_ROUTER_HH
